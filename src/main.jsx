@@ -7,6 +7,7 @@ import App from "./App.jsx";
 import SignupPage from "./pages/signup.jsx";
 import SigninPage from "./pages/signin.jsx";
 import HomePage from "./pages/home.jsx";
+import Channel from "./pages/channel.jsx";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
@@ -14,6 +15,7 @@ createRoot(document.getElementById("root")).render(
       <Routes>
         <Route path="/" element={<App />} />
         <Route path="/app" element={<HomePage />} />
+        <Route path="/app/:channel" element={<Channel />} />
         <Route path="/auth/signup" element={<SignupPage />} />
         <Route path="/auth/signin" element={<SigninPage />} />
       </Routes>
