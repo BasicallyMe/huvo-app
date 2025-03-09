@@ -32,13 +32,33 @@ export default function Channel() {
       const ws = new WebSocket(`ws://localhost:3000?channelid=${channel}`);
       ws.onopen = () => {
         console.log("connection open");
+        createMediaStream();
       };
 
       ws.onmessage = (event) => {
         console.log("Received message", event.data);
       };
+      ws.onerror = (error) => {
+        console.error("WebSocker error", error);
+      }
+      ws.onclose = () => {
+        console.log("Web socket cleanup");
+      }
+      return ws;
     } catch (err) {
       console.log(err);
+    }
+  }
+
+  async function createRTCOffer() {
+    const peerConnection = new RTCPeerConnection();
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    const payload = {
+      type: 'offer',
+      sdp: offer.sdp,
+      channelID: channel
     }
   }
 
@@ -86,7 +106,7 @@ export default function Channel() {
               Tip: Hold the spacebar for push to talk
             </p>
             <div className="flex items-center gap-3">
-              <Button className="pointer-cursor" onClick={createMediaStream}>Push to talk</Button>
+              <Button className="pointer-cursor">Push to talk</Button>
               <Button className="bg-red-500">Leave channel</Button>
             </div>
           </div>
