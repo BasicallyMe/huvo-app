@@ -2,34 +2,62 @@ import { useState, useEffect } from "react";
 import { Copy } from "lucide-react";
 import Button from "../components/button";
 import { useParams } from "react-router";
+import { db } from "../../lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 
 export default function Channel() {
   const { channel } = useParams();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   async function verifyChannel() {
+    const channelID = channel.replace(/-/g, "");
     try {
-      const docRef = doc(db, "channels", channel);
+      const docRef = doc(db, "channels", channelID);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        createSocketConnection();
+        createSocketConnection(channelID);
       } else {
         setError(true);
       }
     } catch (err) {
       console.log(err.code, err.message);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function createSocketConnection() {
-    console.log("creating socket connection");
+  function createSocketConnection(id) {
+    try {
+      const ws = new WebSocket(`ws://localhost:3000?channelid=${channel}`);
+      ws.onopen = () => {
+        console.log("connection open");
+      };
+
+      ws.onmessage = (event) => {
+        console.log("Received message", event.data);
+      };
+    } catch (err) {
+      console.log(err);
+    }
+  }
+
+  function createMediaStream() {
+    console.log('creating media stream')
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+        console.log('Media access granted')
+      }).catch((error) => {
+        console.log('microphone access error', error);
+      })
+    } else {
+      alert("Media not supported on your browser")
+    }
   }
 
   useEffect(function initializeChannel() {
-    verifyChannel();
-  }, []);
+    verifyChannel()
+  }, [channel]);
 
   return (
     <div className="w-full h-dvh max-h-dvh flex flex-col items-center relative">
@@ -58,7 +86,7 @@ export default function Channel() {
               Tip: Hold the spacebar for push to talk
             </p>
             <div className="flex items-center gap-3">
-              <Button className="pointer-cursor">Push to talk</Button>
+              <Button className="pointer-cursor" onClick={createMediaStream}>Push to talk</Button>
               <Button className="bg-red-500">Leave channel</Button>
             </div>
           </div>
