@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Copy } from "lucide-react";
 import Button from "../components/button";
 import { useParams } from "react-router";
@@ -9,6 +9,9 @@ export default function Channel() {
   const { channel } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const socketRef = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const mediaStreamRef = useRef(null);
 
   async function verifyChannel() {
     const channelID = channel.replace(/-/g, "");
@@ -16,7 +19,8 @@ export default function Channel() {
       const docRef = doc(db, "channels", channelID);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        createSocketConnection(channelID);
+        socketRef.current = createSocketConnection(channelID);
+        console.log("socket ref state", socketRef.current.readyState);
       } else {
         setError(true);
       }
@@ -27,23 +31,29 @@ export default function Channel() {
     }
   }
 
-  function createSocketConnection(id) {
+  function createSocketConnection() {
     try {
       const ws = new WebSocket(`ws://localhost:3000?channelid=${channel}`);
       ws.onopen = () => {
         console.log("connection open");
-        createMediaStream();
       };
 
       ws.onmessage = (event) => {
-        console.log("Received message", event.data);
+        const data = JSON.parse(event.data);
+        if (data.type === "create-offer") {
+          createRTCOffer();
+        } else if (data.type === "offer") {
+          answerRTCOffer(data);
+        } else if (data.type === "answer") {
+          completeRTCConnection(data);
+        }
       };
       ws.onerror = (error) => {
         console.error("WebSocker error", error);
-      }
+      };
       ws.onclose = () => {
         console.log("Web socket cleanup");
-      }
+      };
       return ws;
     } catch (err) {
       console.log(err);
@@ -51,33 +61,81 @@ export default function Channel() {
   }
 
   async function createRTCOffer() {
-    const peerConnection = new RTCPeerConnection();
+    if (!peerConnectionRef.current) {
+      peerConnectionRef.current = new RTCPeerConnection();
+    }
+    const peerConnection = peerConnectionRef.current;
+    mediaStreamRef.current
+      .getTracks()
+      .forEach((track) => peerConnection.addTrack(track, stream));
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
 
     const payload = {
-      type: 'offer',
+      type: "offer",
       sdp: offer.sdp,
-      channelID: channel
+      channelID: channel,
+    };
+
+    socketRef.current.send(JSON.stringify(payload));
+
+    console.log("Offer sent", offer);
+  }
+
+  async function answerRTCOffer(data) {
+    console.log("received offer", data);
+    if (!peerConnectionRef.current) {
+      peerConnectionRef.current = new RTCPeerConnection();
     }
+
+    const peerConnection = peerConnectionRef.current;
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
+    mediaStreamRef.current
+      .getTracks()
+      .forEach((track) => peerConnection.addTrack(track, stream));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: "answer",
+        sdp: answer.sdp,
+        channelID,
+      })
+    );
+  }
+
+  async function completeRTCConnection(data) {
+    console.log('receiving answer', data);
+    await peerConnectionRef.current.setRemoteDescription(
+      new RTCSessionDescription(data)
+    );
+    console.log("RTC Connection established");
   }
 
   function createMediaStream() {
-    console.log('creating media stream')
+    console.log("creating media stream");
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-        console.log('Media access granted')
-      }).catch((error) => {
-        console.log('microphone access error', error);
-      })
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((stream) => {
+          mediaStreamRef.current = stream;
+        })
+        .catch((error) => {
+          console.log("microphone access error", error);
+        });
     } else {
-      alert("Media not supported on your browser")
+      alert("Media not supported on your browser");
     }
   }
 
-  useEffect(function initializeChannel() {
-    verifyChannel()
-  }, [channel]);
+  useEffect(
+    function initializeChannel() {
+      createMediaStream();
+      verifyChannel();
+    },
+    [channel]
+  );
 
   return (
     <div className="w-full h-dvh max-h-dvh flex flex-col items-center relative">
