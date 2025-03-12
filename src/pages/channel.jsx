@@ -2,25 +2,26 @@ import { useState, useEffect, useRef } from "react";
 import { Copy } from "lucide-react";
 import Button from "../components/button";
 import { useParams } from "react-router";
-import { db } from "../../lib/firebase";
+import { db, auth } from "../../lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 
 export default function Channel() {
   const { channel } = useParams();
+  const channelID = channel.replace(/-/g, "");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const socketRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const mediaStreamRef = useRef(null);
+  const messageQueueRef = useRef([]);
+  const user = auth.currentUser;
 
   async function verifyChannel() {
-    const channelID = channel.replace(/-/g, "");
     try {
       const docRef = doc(db, "channels", channelID);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        socketRef.current = createSocketConnection(channelID);
-        console.log("socket ref state", socketRef.current.readyState);
+        createMediaStream();
       } else {
         setError(true);
       }
@@ -31,21 +32,38 @@ export default function Channel() {
     }
   }
 
+  function sendMessage(payload) {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(payload);
+    } else {
+      console.warn("Socket not ready. Queuing Message...");
+      messageQueueRef.current.push(payload);
+    }
+  }
+
   function createSocketConnection() {
     try {
-      const ws = new WebSocket(`ws://localhost:3000?channelid=${channel}`);
+      const ws = new WebSocket(`wss://huvo-app-server.onrender.com?channelid=${channelID}`);
       ws.onopen = () => {
-        console.log("connection open");
+        console.log("Socket connection established");
+        socketRef.current = ws;
+        while (messageQueueRef.current.length > 0) {
+          socketRef.current.send(messageQueueRef.current.shift());
+        }
       };
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        console.log("received message", data);
         if (data.type === "create-offer") {
           createRTCOffer();
         } else if (data.type === "offer") {
           answerRTCOffer(data);
         } else if (data.type === "answer") {
           completeRTCConnection(data);
+        } else if (data.type === 'ice-candidate') {
+          console.log('received ice candidate')
+          peerConnectionRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate))
         }
       };
       ws.onerror = (error) => {
@@ -54,20 +72,34 @@ export default function Channel() {
       ws.onclose = () => {
         console.log("Web socket cleanup");
       };
-      return ws;
     } catch (err) {
       console.log(err);
     }
   }
 
   async function createRTCOffer() {
+    console.log("creating offer");
     if (!peerConnectionRef.current) {
       peerConnectionRef.current = new RTCPeerConnection();
     }
     const peerConnection = peerConnectionRef.current;
     mediaStreamRef.current
       .getTracks()
-      .forEach((track) => peerConnection.addTrack(track, stream));
+      .forEach((track) =>
+        peerConnection.addTrack(track, mediaStreamRef.current)
+      );
+
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log('sending ICE candidate')
+        socketRef.current.send(
+          JSON.stringify({
+            type: "ice-candidate",
+            candidate: event.candidate,
+          })
+        );
+      }
+    };
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
 
@@ -77,9 +109,8 @@ export default function Channel() {
       channelID: channel,
     };
 
-    socketRef.current.send(JSON.stringify(payload));
-
-    console.log("Offer sent", offer);
+    sendMessage(JSON.stringify(payload));
+    console.log("Sending offer", offer);
   }
 
   async function answerRTCOffer(data) {
@@ -92,21 +123,33 @@ export default function Channel() {
     await peerConnection.setRemoteDescription(new RTCSessionDescription(data));
     mediaStreamRef.current
       .getTracks()
-      .forEach((track) => peerConnection.addTrack(track, stream));
+      .forEach((track) =>
+        peerConnection.addTrack(track, mediaStreamRef.current)
+      );
+    peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log('sending ICE Candidate')
+        socketRef.current.send(
+          JSON.stringify({
+            type: "ice-candidate",
+            candidate: event.candidate,
+          })
+        );
+      }
+    };
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-
-    socketRef.current.send(
-      JSON.stringify({
-        type: "answer",
-        sdp: answer.sdp,
-        channelID,
-      })
-    );
+    const payload = {
+      type: "answer",
+      sdp: answer.sdp,
+      channelID,
+    };
+    sendMessage(JSON.stringify(payload));
+    console.log("Sending answer");
   }
 
   async function completeRTCConnection(data) {
-    console.log('receiving answer', data);
+    console.log("receiving answer", data);
     await peerConnectionRef.current.setRemoteDescription(
       new RTCSessionDescription(data)
     );
@@ -114,12 +157,12 @@ export default function Channel() {
   }
 
   function createMediaStream() {
-    console.log("creating media stream");
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices
         .getUserMedia({ audio: true })
         .then((stream) => {
           mediaStreamRef.current = stream;
+          createSocketConnection();
         })
         .catch((error) => {
           console.log("microphone access error", error);
@@ -131,7 +174,6 @@ export default function Channel() {
 
   useEffect(
     function initializeChannel() {
-      createMediaStream();
       verifyChannel();
     },
     [channel]
