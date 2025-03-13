@@ -1,5 +1,6 @@
 import Button from "./button";
 import { ArrowRight, Radio } from "lucide-react";
+import { NavLink } from "react-router";
 
 export default function Hero() {
   return (
@@ -20,9 +21,12 @@ export default function Hero() {
           </p>
         </div>
         <div className="flex flex-col gap-2 min-[400px]:flex-row w-full">
-          <Button size="lg" className="gap-1 flex items-center">
+          <NavLink
+            to="/auth/signup"
+            className="flex items-center gap-2 w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm/6 font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+          >
             Get Started <ArrowRight className="h-4 w-4" />
-          </Button>
+          </NavLink>
           <Button size="lg" variant="outline">
             Learn More
           </Button>
