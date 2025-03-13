@@ -14,7 +14,7 @@ export default function Channel() {
   const peerConnectionRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const messageQueueRef = useRef([]);
-  const user = auth.currentUser;
+  const isMicActive = useRef(false);
 
   async function verifyChannel() {
     try {
@@ -43,7 +43,9 @@ export default function Channel() {
 
   function createSocketConnection() {
     try {
-      const ws = new WebSocket(`wss://huvo-app-server.onrender.com?channelid=${channelID}`);
+      const ws = new WebSocket(
+        `wss://huvo-app-server.onrender.com?channelid=${channelID}`
+      );
       ws.onopen = () => {
         console.log("Socket connection established");
         socketRef.current = ws;
@@ -61,9 +63,11 @@ export default function Channel() {
           answerRTCOffer(data);
         } else if (data.type === "answer") {
           completeRTCConnection(data);
-        } else if (data.type === 'ice-candidate') {
-          console.log('received ice candidate')
-          peerConnectionRef.current?.addIceCandidate(new RTCIceCandidate(data.candidate))
+        } else if (data.type === "ice-candidate") {
+          console.log("received ice candidate");
+          peerConnectionRef.current?.addIceCandidate(
+            new RTCIceCandidate(data.candidate)
+          );
         }
       };
       ws.onerror = (error) => {
@@ -71,6 +75,7 @@ export default function Channel() {
       };
       ws.onclose = () => {
         console.log("Web socket cleanup");
+        handleClose();
       };
     } catch (err) {
       console.log(err);
@@ -91,7 +96,7 @@ export default function Channel() {
 
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('sending ICE candidate')
+        console.log("sending ICE candidate");
         socketRef.current.send(
           JSON.stringify({
             type: "ice-candidate",
@@ -128,7 +133,7 @@ export default function Channel() {
       );
     peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('sending ICE Candidate')
+        console.log("sending ICE Candidate");
         socketRef.current.send(
           JSON.stringify({
             type: "ice-candidate",
@@ -162,6 +167,14 @@ export default function Channel() {
         .getUserMedia({ audio: true })
         .then((stream) => {
           mediaStreamRef.current = stream;
+          mediaStreamRef.current.getAudioTracks().forEach((track) => {
+            track.enabled = false;
+          });
+          document.removeEventListener("keydown", handleMicActivate);
+          document.removeEventListener("keyup", handleMicDeactivate);
+
+          document.addEventListener("keydown", handleMicActivate);
+          document.addEventListener("keyup", handleMicDeactivate);
           createSocketConnection();
         })
         .catch((error) => {
@@ -172,12 +185,62 @@ export default function Channel() {
     }
   }
 
+  function handleMicActivate(event) {
+    if (event.code === "Space" && !isMicActive.current) {
+      isMicActive.current = true;
+      console.log("Push-To-Talk Activated");
+      mediaStreamRef.current
+        .getAudioTracks()
+        .forEach((track) => (track.enabled = true));
+    }
+  }
+  function handleMicDeactivate(event) {
+    if (event.code === "Space") {
+      isMicActive.current = false;
+      console.log("Push-To-Talk deactivated");
+      mediaStreamRef.current
+        .getAudioTracks()
+        .forEach((track) => (track.enabled = false));
+    }
+  }
+
+  function handleClose() {
+    console.log("Closing all connections...");
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+
+    document.removeEventListener("keydown", handleMicActivate);
+    document.removeEventListener("keyup", handleMicDeactivate);
+
+    console.log("Connections closed successfully.");
+  }
+
   useEffect(
     function initializeChannel() {
       verifyChannel();
     },
     [channel]
   );
+
+  useEffect(function removeEventListeners() {
+    return () => {
+      document.removeEventListener("keydown", handleMicActivate);
+      document.removeEventListener("keyup", handleMicDeactivate);
+    };
+  }, []);
 
   return (
     <div className="w-full h-dvh max-h-dvh flex flex-col items-center relative">
@@ -206,7 +269,15 @@ export default function Channel() {
               Tip: Hold the spacebar for push to talk
             </p>
             <div className="flex items-center gap-3">
-              <Button className="pointer-cursor">Push to talk</Button>
+              <Button
+                className="pointer-cursor"
+                onMouseDown={handleMicActivate}
+                onMouseUp={handleMicDeactivate}
+                onTouchStart={handleMicActivate}
+                onTouchEnd={handleMicDeactivate}
+              >
+                Push to talk
+              </Button>
               <Button className="bg-red-500">Leave channel</Button>
             </div>
           </div>
